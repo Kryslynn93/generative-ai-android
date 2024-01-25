@@ -8,40 +8,18 @@ on:
   schedule:
     - cron: '0 0 * * 0'
 
-permissions:
-  contents: write
-  pull-requests: write
-
 jobs:
   unit-tests:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout branch
         uses: actions/checkout@v3.5.3
-        with:
-          ref: ${{ github.event.pull_request.head.ref }}
       - name: Set up JDK 17
         uses: actions/setup-java@v3
         with:
           java-version: 17
           distribution: temurin
           cache: gradle
-      - name: Install AppMap tools
-        id: install-appmap
-        uses: getappmap/install-action@v1
-        with:
-          project-type: gradle
-      - name: Commit changes
-        uses: EndBug/add-and-commit@v9
-        with:
-          message: "ci: Add AppMap language agent and appmap.yml"
       - name: Run tests
         run: |
           ./gradlew appmap test --no-daemon
-      # Begin AppMap bootstrap archive step
-      - name: Archive AppMaps
-        id: appmap-bootstrap-archive-appmaps
-        uses: getappmap/archive-action@v1
-        with:
-          revision: ${{ github.event.pull_request.base.sha }}
-      # End AppMap bootstrap archive step
