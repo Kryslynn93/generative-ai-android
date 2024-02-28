@@ -1,6 +1,12 @@
 name: Unit tests
 
-on: pull_request
+on: 
+  push:
+    branches:
+      - main
+  pull_request:
+  schedule:
+    - cron: '0 0 * * 0'
 
 jobs:
   unit-tests:
@@ -16,4 +22,19 @@ jobs:
           cache: gradle
       - name: Run tests
         run: |
-          ./gradlew test --no-daemon
+          ./gradlew appmap test --no-daemon
+      - name: Save AppMaps
+        uses: actions/cache@v3
+        if: always()
+        with:
+          path: ./tmp/appmap
+          key: appmaps-${{ github.sha }}-${{ github.run_attempt }}
+  appmap-analysis:
+    if: always()
+    needs: [ unit-tests ]
+    uses: getappmap/analyze-action/.github/workflows/appmap-analysis.yml@v1
+    permissions:
+      actions: read
+      contents: read
+      checks: write
+      pull-requests: write
