@@ -18,7 +18,9 @@ package com.google.ai.client.generativeai.internal.api
 
 import com.google.ai.client.generativeai.BuildConfig
 import com.google.ai.client.generativeai.internal.util.decodeToFlow
+import com.google.ai.client.generativeai.type.InvalidAPIKeyException
 import com.google.ai.client.generativeai.type.ServerException
+import com.google.ai.client.generativeai.type.UnsupportedUserLocationException
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.HttpClientEngine
@@ -37,14 +39,15 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
+import kotlin.time.Duration
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.flow.timeout
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 
-// TODO: Should these stay here or be moved elsewhere?
-internal const val DOMAIN = "https://generativelanguage.googleapis.com/v1/models"
+internal const val DOMAIN = "https://generativelanguage.googleapis.com"
 
 internal val JSON = Json {
   ignoreUnknownKeys = true
@@ -60,40 +63,46 @@ internal val JSON = Json {
  *   Exposed primarily for DI in tests.
  * @property key The API key used for authentication.
  * @property model The model to use for generation.
+ * @property apiVersion the endpoint version to communicate with.
+ * @property timeout the maximum amount of time for a request to take in the initial exchange.
  */
 internal class APIController(
   private val key: String,
-  private val model: String,
-  httpEngine: HttpClientEngine = OkHttp.create()
+  model: String,
+  private val apiVersion: String,
+  private val timeout: Duration,
+  httpEngine: HttpClientEngine = OkHttp.create(),
 ) {
+  private val model = fullModelName(model)
+
   private val client =
     HttpClient(httpEngine) {
       install(HttpTimeout) {
-        requestTimeoutMillis = HttpTimeout.INFINITE_TIMEOUT_MS
+        requestTimeoutMillis = timeout.inWholeMilliseconds
         socketTimeoutMillis = 80_000
       }
       install(ContentNegotiation) { json(JSON) }
     }
 
-  suspend fun generateContent(request: GenerateContentRequest): GenerateContentResponse {
-    return client
-      .post("$DOMAIN/$model:generateContent") { applyCommonConfiguration(request) }
+  suspend fun generateContent(request: GenerateContentRequest): GenerateContentResponse =
+    client
+      .post("$DOMAIN/$apiVersion/$model:generateContent") { applyCommonConfiguration(request) }
       .also { validateResponse(it) }
       .body()
-  }
 
   fun generateContentStream(request: GenerateContentRequest): Flow<GenerateContentResponse> {
-    return client.postStream("$DOMAIN/$model:streamGenerateContent?alt=sse") {
+    return client.postStream<GenerateContentResponse>(
+      "$DOMAIN/$apiVersion/$model:streamGenerateContent?alt=sse"
+    ) {
       applyCommonConfiguration(request)
     }
   }
 
-  suspend fun countTokens(request: CountTokensRequest): CountTokensResponse {
-    return client
-      .post("$DOMAIN/$model:countTokens") { applyCommonConfiguration(request) }
+  suspend fun countTokens(request: CountTokensRequest): CountTokensResponse =
+    client
+      .post("$DOMAIN/$apiVersion/$model:countTokens") { applyCommonConfiguration(request) }
       .also { validateResponse(it) }
       .body()
-  }
 
   private fun HttpRequestBuilder.applyCommonConfiguration(request: Request) {
     when (request) {
@@ -105,6 +114,13 @@ internal class APIController(
     header("x-goog-api-client", "genai-android/${BuildConfig.VERSION_NAME}")
   }
 }
+
+/**
+ * Ensures the model name provided has a `models/` prefix
+ *
+ * Models must be prepended with the `models/` prefix when communicating with the backend.
+ */
+private fun fullModelName(name: String): String = name.takeIf { it.contains("/") } ?: "models/$name"
 
 /**
  * Makes a POST request to the specified [url] and returns a [Flow] of deserialized response objects
@@ -159,7 +175,13 @@ private suspend fun validateResponse(response: HttpResponse) {
       } catch (e: Throwable) {
         "Unexpected Response:\n$text"
       }
-
+    if (message.contains("API key not valid")) {
+      throw InvalidAPIKeyException(message)
+    }
+    // TODO (b/325117891): Use a better method than string matching.
+    if (message == "User location is not supported for the API use.") {
+      throw UnsupportedUserLocationException()
+    }
     throw ServerException(message)
   }
 }

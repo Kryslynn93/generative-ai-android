@@ -1,7 +1,7 @@
 {
   "error": {
     "code": 400,
-    "message": "$grpcMessage",
+    "message": "User location is not supported for the API use.",
     "status": "FAILED_PRECONDITION",
     "details": [
       {
